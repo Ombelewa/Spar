@@ -1,18 +1,23 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import ProductCard, { Product } from "@/components/ProductCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Search, SlidersHorizontal, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { categoryService, productService } from "@/lib/supabase-service";
 import { supabase } from "@/supabase";
 
 const Products = () => {
   const [products, setProducts] = useState<Product[]>([]);
-  const [cart, setCart] = useState<{ product: Product; quantity: number }[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [cart, setCart] = useState<{ product: Product; quantity: number }[]>(
+    [],
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showInStockOnly, setShowInStockOnly] = useState(false);
@@ -22,14 +27,7 @@ const Products = () => {
   const navigate = useNavigate();
   const isMounted = useRef(true);
   const [searchParams] = useSearchParams();
-
-  const categories = [
-    { id: "all", name: "All Products" },
-    { id: "fruits", name: "Fruits" },
-    { id: "vegetables", name: "Vegetables" },
-    { id: "dairy", name: "Dairy" },
-    { id: "bakery", name: "Bakery" },
-  ];
+  const { slug } = useParams();
 
   useEffect(() => {
     isMounted.current = true;
@@ -41,32 +39,55 @@ const Products = () => {
         setLoading(true);
         setError(null);
 
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (userError) throw new Error("Authentication error: " + userError.message);
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError)
+          throw new Error("Authentication error: " + userError.message);
         if (!user) {
           console.log("No user found, redirecting to auth");
           navigate("/auth");
           return;
         }
 
-        const { data: productData, error: productError } = await supabase
-          .from("products")
-          .select("*");
-        if (productError) throw new Error("Product fetch error: " + productError.message);
-        setProducts(productData || []);
+        // Load categories from database
+        const categoriesData = await categoryService.getCategories(true);
+        const categoriesWithAll = [
+          { id: "all", name: "All Products", slug: "all" },
+          ...categoriesData,
+        ];
+        setCategories(categoriesWithAll);
 
+        // Load products from database
+        const productsData = await productService.getProducts({
+          activeOnly: true,
+        });
+        setProducts(productsData || []);
+        setAllProducts(productsData || []);
+
+        // Load cart data
         const { data: cartData, error: cartError } = await supabase
           .from("cart_items")
           .select("*, product:products(*)")
-          .eq("user_id", user.id);
-        if (cartError) throw new Error("Cart fetch error: " + cartError.message);
+          .eq("customer_id", user.id);
+        if (cartError)
+          throw new Error("Cart fetch error: " + cartError.message);
 
         setCart(
           cartData?.map((item) => ({
             product: item.product,
             quantity: item.quantity,
-          })) || []
+          })) || [],
         );
+
+        // Handle category from URL params
+        if (slug && slug !== "all") {
+          const category = categoriesData.find((cat: any) => cat.slug === slug);
+          if (category) {
+            setSelectedCategory(category.id);
+          }
+        }
 
         // Sync search query from URL
         const query = searchParams.get("search") || "";
@@ -84,28 +105,57 @@ const Products = () => {
     return () => {
       isMounted.current = false;
     };
-  }, [navigate, searchParams]);
+  }, [navigate, searchParams, slug]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     navigate(`/products?search=${encodeURIComponent(searchQuery.trim())}`);
   };
 
-  const filteredProducts = products.filter((product) => {
-    const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = !selectedCategory || selectedCategory === "all" || product.category === selectedCategory;
-    const matchesStock = !showInStockOnly || product.stock > 0;
-    return matchesSearch && matchesCategory && matchesStock;
-  });
+  // Filter products based on search, category, and stock
+  useEffect(() => {
+    let filtered = [...allProducts];
+
+    // Filter by search query
+    if (searchQuery.trim()) {
+      filtered = filtered.filter(
+        (product) =>
+          product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          product.description
+            ?.toLowerCase()
+            .includes(searchQuery.toLowerCase()),
+      );
+    }
+
+    // Filter by category
+    if (selectedCategory && selectedCategory !== "all") {
+      filtered = filtered.filter(
+        (product) => product.category_id === selectedCategory,
+      );
+    }
+
+    // Filter by stock
+    if (showInStockOnly) {
+      filtered = filtered.filter((product) => product.stock_quantity > 0);
+    }
+
+    setProducts(filtered);
+  }, [allProducts, searchQuery, selectedCategory, showInStockOnly]);
 
   const handleAddToCart = async (product: Product, quantity: number) => {
-    if (!product.stock || quantity > product.stock) {
-      setError(`Cannot add ${product.name}: Insufficient stock`);
+    if (!product.stock_quantity || quantity > product.stock_quantity) {
+      toast({
+        title: "Out of Stock",
+        description: `Cannot add ${product.name}: Insufficient stock`,
+        variant: "destructive",
+      });
       return;
     }
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) {
         navigate("/auth");
         return;
@@ -114,7 +164,7 @@ const Products = () => {
       const { data: existingItem, error: fetchError } = await supabase
         .from("cart_items")
         .select("*")
-        .eq("user_id", user.id)
+        .eq("customer_id", user.id)
         .eq("product_id", product.id)
         .maybeSingle();
 
@@ -124,8 +174,12 @@ const Products = () => {
 
       if (existingItem) {
         const newQuantity = existingItem.quantity + quantity;
-        if (newQuantity > product.stock) {
-          setError(`Cannot add ${quantity} more ${product.name}: Only ${product.stock} in stock`);
+        if (newQuantity > product.stock_quantity) {
+          toast({
+            title: "Stock Limit",
+            description: `Cannot add ${quantity} more ${product.name}: Only ${product.stock_quantity} in stock`,
+            variant: "destructive",
+          });
           return;
         }
 
@@ -133,20 +187,22 @@ const Products = () => {
           .from("cart_items")
           .update({ quantity: newQuantity })
           .eq("id", existingItem.id);
-        if (updateError) throw new Error("Cart update error: " + updateError.message);
+        if (updateError)
+          throw new Error("Cart update error: " + updateError.message);
 
         setCart((prevCart) =>
           prevCart.map((item) =>
             item.product.id === product.id
               ? { ...item, quantity: newQuantity }
-              : item
-          )
+              : item,
+          ),
         );
       } else {
         const { error: insertError } = await supabase
           .from("cart_items")
-          .insert([{ user_id: user.id, product_id: product.id, quantity }]);
-        if (insertError) throw new Error("Cart insert error: " + insertError.message);
+          .insert([{ customer_id: user.id, product_id: product.id, quantity }]);
+        if (insertError)
+          throw new Error("Cart insert error: " + insertError.message);
 
         setCart((prevCart) => [...prevCart, { product, quantity }]);
       }
@@ -163,7 +219,20 @@ const Products = () => {
 
   const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  if (loading) return <div>Loading...</div>;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container py-8">
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="text-center">
+              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-indigo-600" />
+              <p className="text-gray-600">Loading products...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (error) {
     return (
       <div className="min-h-screen bg-background">
@@ -208,9 +277,18 @@ const Products = () => {
             {categories.map((category) => (
               <Badge
                 key={category.id}
-                variant={selectedCategory === category.id || (selectedCategory === null && category.id === "all") ? "default" : "outline"}
+                variant={
+                  selectedCategory === category.id ||
+                  (selectedCategory === null && category.id === "all")
+                    ? "default"
+                    : "outline"
+                }
                 className="cursor-pointer px-4 py-2"
-                onClick={() => setSelectedCategory(category.id === "all" ? null : category.id)}
+                onClick={() =>
+                  setSelectedCategory(
+                    category.id === "all" ? null : category.id,
+                  )
+                }
               >
                 {category.name}
               </Badge>
@@ -218,7 +296,7 @@ const Products = () => {
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {filteredProducts.map((product) => (
+          {products.map((product) => (
             <ProductCard
               key={product.id}
               product={product}
@@ -226,7 +304,7 @@ const Products = () => {
             />
           ))}
         </div>
-        {filteredProducts.length === 0 && (
+        {products.length === 0 && (
           <div className="text-center py-12">
             <p className="text-muted-foreground text-lg">No products found</p>
           </div>

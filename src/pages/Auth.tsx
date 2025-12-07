@@ -1,14 +1,21 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Eye, EyeOff, Phone } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/supabase";
+import { useToast } from "@/components/ui/use-toast";
 
 const Auth = () => {
   const [loginEmail, setLoginEmail] = useState("");
@@ -18,75 +25,81 @@ const Auth = () => {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const { toast } = useToast();
 
-  const validatePassword = (password) => {
-    const minLength = 8;
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasNumbers = /\d/.test(password);
-    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+  // Force tab from URL: /auth?tab=signup
+  const urlTab = new URLSearchParams(location.search).get("tab");
+  const defaultTab = urlTab === "signup" ? "signup" : "login";
 
-    if (password.length < minLength) {
-      return "Password must be at least 8 characters long";
-    }
-    if (!hasUpperCase || !hasLowerCase || !hasNumbers || !hasSpecialChar) {
-      return "Password must contain uppercase, lowercase, number, and special character";
-    }
+  // === ADMIN CREATION (Run ONCE) ===
+  useEffect(() => {
+    const createAdmin = async () => {
+      const adminEmail = "ssylvanus516@gmail.com";
+      const adminPassword = "Admin@123!";
+
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: adminEmail,
+          password: adminPassword,
+          options: {
+            data: { full_name: "Admin User" },
+          },
+        });
+
+        if (error && error.message.includes("already registered")) {
+          console.log("Admin already exists");
+          return;
+        }
+
+        if (error) throw error;
+
+        if (data.user) {
+          await supabase.from("profiles").upsert({
+            id: data.user.id,
+            first_name: "Admin",
+            last_name: "User",
+            email: adminEmail,
+            phone: "",
+          });
+          console.log("Admin created successfully!");
+        }
+      } catch (err: any) {
+        console.error("Admin creation failed:", err.message);
+      }
+    };
+
+    // Uncomment next line to create admin (run once!)
+    // createAdmin();
+  }, []);
+
+  const validatePassword = (pwd: string): string | null => {
+    const min = 8;
+    const hasUpper = /[A-Z]/.test(pwd);
+    const hasLower = /[a-z]/.test(pwd);
+    const hasNum = /\d/.test(pwd);
+    const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(pwd);
+    if (pwd.length < min) return "Password must be at least 8 characters";
+    if (!hasUpper || !hasLower || !hasNum || !hasSpecial)
+      return "Password needs uppercase, lowercase, number & special char";
     return null;
   };
 
-  const handleLogin = async (e) => {
+  // ==================== SIGNUP ====================
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
-      });
-
-      if (error) {
-        setError(error.message);
-        setLoading(false);
-        return;
-      }
-
-      // Log session
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        await supabase.from("user_sessions").insert([
-          {
-            user_id: session.user.id,
-            ip_address: "unknown", // Note: Actual IP collection requires server-side implementation
-            user_agent: navigator.userAgent,
-          },
-        ]);
-      }
-
-      setLoading(false);
-      navigate("/profile");
-    } catch (err) {
-      setError("An unexpected error occurred. Please try again.");
-      setLoading(false);
-    }
-  };
-
-  const handleSignup = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    const passwordError = validatePassword(signupPassword);
-    if (passwordError) {
-      setError(passwordError);
+    const pwdErr = validatePassword(signupPassword);
+    if (pwdErr) {
+      setError(pwdErr);
       setLoading(false);
       return;
     }
-
     if (signupPassword !== signupConfirmPassword) {
       setError("Passwords do not match");
       setLoading(false);
@@ -94,66 +107,65 @@ const Auth = () => {
     }
 
     try {
-        const[first_name, ...lastNameParts] = signupName.trim().split(" ");
-        const last_name = lastNameParts.join(" ")|| "Unknown";
+      const full_name = signupName.trim() || "User";
 
       const { data, error } = await supabase.auth.signUp({
         email: signupEmail,
         password: signupPassword,
-        options: {
-          data: { first_name, last_name },
-        },
+        options: { data: { full_name } },
       });
 
-      if (error) {
-        console.error("Signup Error:", error);
-        setError(error.message);
-        setLoading(false);
-        return;
-      }
+      if (error) throw error;
+      if (!data.user) throw new Error("Signup failed – no user returned");
 
-      if (data.user) {
-        const{ error: profileError } = await supabase.from("profiles").upsert([
-          {
-            id: data.user.id,
-            first_name,
-            last_name,
-            email: signupEmail,
-            Phone: "",
-          },
-        ], {onConflict: "id" });
+      await supabase.from("profiles").upsert(
+        {
+          id: data.user.id,
+          full_name,
+          email: signupEmail,
+          phone: "",
+        },
+        { onConflict: "id" },
+      );
 
-        if (profileError){
-            console.error("Profile Insert Error:", profileError);
-            throw new Error("Failed to create profile: " + profileError.message);
-        }
-
-        // Log initial session
-        const{ error: sessionError } = await supabase.from("user_sessions").insert([
-          {
-            user_id: data.user.id,
-            ip_address: "unknown",
-            user_agent: navigator.userAgent,
-          },
-        ]);
-
-       if (sessionError) {
-        console.error("Session Insert Error:", sessionError);
-        throw new Error("Failed to log session: " + sessionError.message);
-      }
-
+      toast({ title: "Success!", description: "Check your email to confirm." });
+      navigate("/auth?tab=login");
+    } catch (err: any) {
+      setError(err.message || "Signup failed");
+    } finally {
       setLoading(false);
-      alert("Signup successful! Please check your email to confirm.");
-      navigate("/profile");
-    } else {
-      throw new Error("No user data returned from signup");
     }
-  } catch (err) {
-    console.error("Signup Error:", err);
-    setError(err.message || "An unexpected error occurred. Please try again.");
-    setLoading(false);
-  }
-};
+  };
+
+  // ==================== LOGIN ====================
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginPassword,
+      });
+      if (error) throw error;
+
+      // Log session (safe, no .catch)
+      // User session is automatically tracked by Supabase Auth
+
+      toast({ title: "Welcome back!" });
+
+      if (loginEmail.toLowerCase() === "ssylvanus516@gmail.com") {
+        navigate("/admin");
+      } else {
+        navigate("/profile");
+      }
+    } catch (err: any) {
+      setError(err.message || "Invalid email or password");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -165,17 +177,19 @@ const Auth = () => {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
-          <Tabs defaultValue="login" className="w-full">
+
+          <Tabs defaultValue={defaultTab} className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="signup">Sign Up</TabsTrigger>
             </TabsList>
 
+            {/* LOGIN TAB */}
             <TabsContent value="login">
               <Card>
                 <CardHeader>
                   <CardTitle>Welcome Back</CardTitle>
-                  <CardDescription>Login to your SPAR account</CardDescription>
+                  <CardDescription>Enter your credentials</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleLogin} className="space-y-4">
@@ -208,7 +222,11 @@ const Auth = () => {
                           className="absolute right-2 top-1/2 -translate-y-1/2"
                           onClick={() => setShowPassword(!showPassword)}
                         >
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          {showPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -220,6 +238,7 @@ const Auth = () => {
               </Card>
             </TabsContent>
 
+            {/* SIGNUP TAB */}
             <TabsContent value="signup">
               <Card>
                 <CardHeader>
@@ -268,19 +287,27 @@ const Auth = () => {
                           className="absolute right-2 top-1/2 -translate-y-1/2"
                           onClick={() => setShowPassword(!showPassword)}
                         >
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          {showPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
                         </Button>
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="signup-confirm-password">Confirm Password</Label>
+                      <Label htmlFor="signup-confirm-password">
+                        Confirm Password
+                      </Label>
                       <div className="relative">
                         <Input
                           id="signup-confirm-password"
                           type={showPassword ? "text" : "password"}
                           placeholder="••••••••"
                           value={signupConfirmPassword}
-                          onChange={(e) => setSignupConfirmPassword(e.target.value)}
+                          onChange={(e) =>
+                            setSignupConfirmPassword(e.target.value)
+                          }
                           required
                         />
                         <Button
@@ -290,7 +317,11 @@ const Auth = () => {
                           className="absolute right-2 top-1/2 -translate-y-1/2"
                           onClick={() => setShowPassword(!showPassword)}
                         >
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          {showPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -303,7 +334,7 @@ const Auth = () => {
             </TabsContent>
           </Tabs>
 
-          <p className="text-center text-sm text-muted-foreground mt-4">
+          <p className="text-center text-sm text-muted-foreground mt-6">
             By continuing, you agree to SPAR's{" "}
             <Link to="/" className="underline hover:text-primary">
               Terms of Service

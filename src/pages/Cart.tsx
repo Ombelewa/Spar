@@ -37,8 +37,12 @@ const Cart = () => {
         setLoading(true);
         setError(null);
 
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (userError) throw new Error("Authentication error: " + userError.message);
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError)
+          throw new Error("Authentication error: " + userError.message);
         if (!user) {
           console.log("No user found, redirecting to auth");
           navigate("/auth");
@@ -48,7 +52,7 @@ const Cart = () => {
         const { data, error } = await supabase
           .from("cart_items")
           .select("*, product:products(*)")
-          .eq("user_id", user.id);
+          .eq("customer_id", user.id);
         if (error) throw new Error("Cart fetch error: " + error.message);
 
         setCartItems(data || []);
@@ -74,7 +78,9 @@ const Cart = () => {
 
       const newQuantity = Math.max(1, item.quantity + change);
       if (newQuantity > item.product.stock) {
-        setError(`Cannot set quantity to ${newQuantity} for ${item.product.name}: Only ${item.product.stock} in stock`);
+        setError(
+          `Cannot set quantity to ${newQuantity} for ${item.product.name}: Only ${item.product.stock} in stock`,
+        );
         return;
       }
 
@@ -86,8 +92,8 @@ const Cart = () => {
 
       setCartItems((items) =>
         items.map((item) =>
-          item.id === id ? { ...item, quantity: newQuantity } : item
-        )
+          item.id === id ? { ...item, quantity: newQuantity } : item,
+        ),
       );
     } catch (err) {
       console.error("Update Quantity Error:", err);
@@ -97,10 +103,7 @@ const Cart = () => {
 
   const removeItem = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from("cart_items")
-        .delete()
-        .eq("id", id);
+      const { error } = await supabase.from("cart_items").delete().eq("id", id);
       if (error) throw new Error("Remove item error: " + error.message);
 
       setCartItems((items) => items.filter((item) => item.id !== id));
@@ -110,7 +113,10 @@ const Cart = () => {
     }
   };
 
-  const subtotal = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const subtotal = cartItems.reduce(
+    (sum, item) => sum + item.product.price * item.quantity,
+    0,
+  );
   const deliveryFee = subtotal > 200 ? 0 : 35;
   const total = subtotal + deliveryFee;
 
@@ -118,7 +124,12 @@ const Cart = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-background">
-        <Navbar cartItemsCount={cartItems.reduce((sum, item) => sum + item.quantity, 0)} />
+        <Navbar
+          cartItemsCount={cartItems.reduce(
+            (sum, item) => sum + item.quantity,
+            0,
+          )}
+        />
         <main className="container py-8">
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
@@ -130,7 +141,9 @@ const Cart = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navbar cartItemsCount={cartItems.reduce((sum, item) => sum + item.quantity, 0)} />
+      <Navbar
+        cartItemsCount={cartItems.reduce((sum, item) => sum + item.quantity, 0)}
+      />
       <main className="container py-8">
         <div className="mb-6">
           <Link to="/products">
@@ -144,7 +157,9 @@ const Cart = () => {
 
         {cartItems.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-muted-foreground text-lg mb-4">Your cart is empty</p>
+            <p className="text-muted-foreground text-lg mb-4">
+              Your cart is empty
+            </p>
             <Link to="/products">
               <Button>Start Shopping</Button>
             </Link>
@@ -162,8 +177,12 @@ const Cart = () => {
                         className="w-24 h-24 object-cover rounded-lg"
                       />
                       <div className="flex-1">
-                        <h3 className="font-semibold mb-1">{item.product.name}</h3>
-                        <p className="text-sm text-muted-foreground mb-2">{item.product.unit}</p>
+                        <h3 className="font-semibold mb-1">
+                          {item.product.name}
+                        </h3>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          {item.product.unit}
+                        </p>
                         <div className="flex items-center justify-between">
                           <div className="text-lg font-bold text-primary">
                             R {(item.product.price * item.quantity).toFixed(2)}
@@ -178,7 +197,9 @@ const Cart = () => {
                             >
                               <Minus className="h-4 w-4" />
                             </Button>
-                            <div className="w-12 text-center font-semibold">{item.quantity}</div>
+                            <div className="w-12 text-center font-semibold">
+                              {item.quantity}
+                            </div>
                             <Button
                               size="icon"
                               variant="outline"
@@ -212,23 +233,32 @@ const Cart = () => {
                   <div className="space-y-2">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Subtotal</span>
-                      <span className="font-medium">R {subtotal.toFixed(2)}</span>
+                      <span className="font-medium">
+                        R {subtotal.toFixed(2)}
+                      </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Delivery Fee</span>
+                      <span className="text-muted-foreground">
+                        Delivery Fee
+                      </span>
                       <span className="font-medium">
-                        {deliveryFee === 0 ? "FREE" : `R ${deliveryFee.toFixed(2)}`}
+                        {deliveryFee === 0
+                          ? "FREE"
+                          : `R ${deliveryFee.toFixed(2)}`}
                       </span>
                     </div>
                     {subtotal < 200 && (
                       <p className="text-sm text-muted-foreground">
-                        Add R {(200 - subtotal).toFixed(2)} more for free delivery
+                        Add R {(200 - subtotal).toFixed(2)} more for free
+                        delivery
                       </p>
                     )}
                     <div className="pt-4 border-t">
                       <div className="flex justify-between text-lg font-bold">
                         <span>Total</span>
-                        <span className="text-primary">R {total.toFixed(2)}</span>
+                        <span className="text-primary">
+                          R {total.toFixed(2)}
+                        </span>
                       </div>
                     </div>
                   </div>
