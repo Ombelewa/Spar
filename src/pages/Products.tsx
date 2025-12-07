@@ -39,17 +39,11 @@ const Products = () => {
         setLoading(true);
         setError(null);
 
+        // Get user if logged in (but don't require authentication for browsing)
         const {
           data: { user },
-          error: userError,
         } = await supabase.auth.getUser();
-        if (userError)
-          throw new Error("Authentication error: " + userError.message);
-        if (!user) {
-          console.log("No user found, redirecting to auth");
-          navigate("/auth");
-          return;
-        }
+        console.log("User status:", user ? "Logged in" : "Guest browsing");
 
         // Load categories from database
         const categoriesData = await categoryService.getCategories(true);
@@ -66,20 +60,26 @@ const Products = () => {
         setProducts(productsData || []);
         setAllProducts(productsData || []);
 
-        // Load cart data
-        const { data: cartData, error: cartError } = await supabase
-          .from("cart_items")
-          .select("*, product:products(*)")
-          .eq("customer_id", user.id);
-        if (cartError)
-          throw new Error("Cart fetch error: " + cartError.message);
-
-        setCart(
-          cartData?.map((item) => ({
-            product: item.product,
-            quantity: item.quantity,
-          })) || [],
-        );
+        // Load cart data only if user is logged in
+        if (user) {
+          const { data: cartData, error: cartError } = await supabase
+            .from("cart_items")
+            .select("*, product:products(*)")
+            .eq("customer_id", user.id);
+          if (cartError) {
+            console.error("Cart fetch error:", cartError);
+          } else {
+            setCart(
+              cartData?.map((item) => ({
+                product: item.product,
+                quantity: item.quantity,
+              })) || [],
+            );
+          }
+        } else {
+          // For guest users, initialize empty cart
+          setCart([]);
+        }
 
         // Handle category from URL params
         if (slug && slug !== "all") {
@@ -156,8 +156,42 @@ const Products = () => {
       const {
         data: { user },
       } = await supabase.auth.getUser();
+
       if (!user) {
-        navigate("/auth");
+        // Guest user - add to localStorage cart
+        const guestCart = JSON.parse(localStorage.getItem("guestCart") || "[]");
+        const existingItemIndex = guestCart.findIndex(
+          (item: any) => item.product.id === product.id,
+        );
+
+        if (existingItemIndex >= 0) {
+          // Update existing item
+          const newQuantity = guestCart[existingItemIndex].quantity + quantity;
+          if (newQuantity > product.stock_quantity) {
+            toast({
+              title: "Stock Limit",
+              description: `Cannot add ${quantity} more ${product.name}: Only ${product.stock_quantity} in stock`,
+              variant: "destructive",
+            });
+            return;
+          }
+          guestCart[existingItemIndex].quantity = newQuantity;
+        } else {
+          // Add new item
+          guestCart.push({
+            id: `guest-${Date.now()}-${product.id}`,
+            product: product,
+            quantity: quantity,
+          });
+        }
+
+        localStorage.setItem("guestCart", JSON.stringify(guestCart));
+        setCart(guestCart);
+
+        toast({
+          title: "Added to cart",
+          description: `${quantity}x ${product.name}`,
+        });
         return;
       }
 

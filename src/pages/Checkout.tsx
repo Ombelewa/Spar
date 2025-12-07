@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Clock, MapPin, Store, Truck, CreditCard, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/supabase";
 import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
 import axios from "axios";
@@ -90,11 +90,19 @@ const Checkout = () => {
         const {
           data: { user },
         } = await supabase.auth.getUser();
+
         if (!user) {
-          console.log("No user found, redirecting to /auth");
-          navigate("/auth");
+          // Guest user - load cart from localStorage and show sign-up prompt
+          console.log("Guest user detected in checkout");
+          const guestCart = JSON.parse(
+            localStorage.getItem("guestCart") || "[]",
+          );
+          setCartItems(guestCart);
+          setLoading(false);
+          setInitialDataLoaded(true);
           return;
         }
+
         setUser(user);
 
         // Fetch profile
@@ -518,6 +526,63 @@ const Checkout = () => {
     </div>
   );
 
+  // Guest Sign-up Prompt Component
+  const GuestSignupPrompt = () => (
+    <div className="min-h-screen bg-background">
+      <Navbar cartItemsCount={cartItemsCount} />
+      <main className="container py-8">
+        <div className="max-w-2xl mx-auto text-center">
+          <h1 className="text-4xl font-bold mb-4">Complete Your Order</h1>
+          <p className="text-lg text-gray-600 mb-8">
+            Sign up or log in to complete your checkout and place your order.
+          </p>
+
+          <div className="bg-gray-50 rounded-lg p-6 mb-8">
+            <h2 className="font-semibold mb-4">Your Cart Summary</h2>
+            <div className="space-y-2 text-sm">
+              {cartItems.map((item) => (
+                <div key={item.id} className="flex justify-between">
+                  <span>
+                    {item.quantity}x {item.product.name}
+                  </span>
+                  <span>
+                    R {(item.product.price * item.quantity).toFixed(2)}
+                  </span>
+                </div>
+              ))}
+              <div className="border-t pt-2 font-semibold">
+                <div className="flex justify-between">
+                  <span>Total</span>
+                  <span>R {total.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <Link to="/auth?tab=signup">
+              <Button size="lg" className="w-full">
+                Sign Up to Checkout
+              </Button>
+            </Link>
+            <p className="text-sm text-gray-600">
+              Already have an account?{" "}
+              <Link to="/auth" className="text-primary hover:underline">
+                Sign in here
+              </Link>
+            </p>
+          </div>
+
+          <div className="mt-8 pt-6 border-t">
+            <p className="text-xs text-gray-500">
+              Your cart items are saved. Sign up to continue with your order.
+            </p>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+
   const CheckoutContent = () => (
     <div className="min-h-screen bg-background relative">
       {/* Loading Overlay */}
@@ -867,6 +932,11 @@ const Checkout = () => {
   // Show success page if order is completed
   if (orderCompleted) {
     return <OrderSuccessPage />;
+  }
+
+  // Show sign-up prompt for guest users
+  if (!user && !loading) {
+    return <GuestSignupPrompt />;
   }
 
   return isPayPalConfigured ? (

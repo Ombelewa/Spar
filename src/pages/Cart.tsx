@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Minus, Plus, Trash2, ArrowLeft } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/supabase";
+import { authService } from "@/lib/supabase-service";
 
 interface CartItem {
   id: string;
@@ -24,8 +26,24 @@ const Cart = () => {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isGuest, setIsGuest] = useState(false);
   const navigate = useNavigate();
   const isMounted = useRef(true);
+  const { toast } = useToast();
+
+  // Guest cart management using localStorage
+  const getGuestCart = (): CartItem[] => {
+    try {
+      const cart = localStorage.getItem("guestCart");
+      return cart ? JSON.parse(cart) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const saveGuestCart = (cart: CartItem[]) => {
+    localStorage.setItem("guestCart", JSON.stringify(cart));
+  };
 
   useEffect(() => {
     isMounted.current = true;
@@ -37,28 +55,28 @@ const Cart = () => {
         setLoading(true);
         setError(null);
 
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser();
-        if (userError)
-          throw new Error("Authentication error: " + userError.message);
+        const user = await authService.getCurrentUser();
+
         if (!user) {
-          console.log("No user found, redirecting to auth");
-          navigate("/auth");
-          return;
+          // Guest user - load cart from localStorage
+          console.log("Guest user detected, loading cart from localStorage");
+          setIsGuest(true);
+          const guestCart = getGuestCart();
+          setCartItems(guestCart);
+        } else {
+          // Authenticated user - load cart from database
+          setIsGuest(false);
+          const { data, error } = await supabase
+            .from("cart_items")
+            .select("*, product:products(*)")
+            .eq("customer_id", user.id);
+
+          if (error) throw error;
+          setCartItems(data || []);
         }
-
-        const { data, error } = await supabase
-          .from("cart_items")
-          .select("*, product:products(*)")
-          .eq("customer_id", user.id);
-        if (error) throw new Error("Cart fetch error: " + error.message);
-
-        setCartItems(data || []);
-      } catch (err) {
-        console.error("Fetch Error:", err);
-        setError(err.message || "Failed to load cart");
+      } catch (error: any) {
+        console.error("Fetch Error:", error);
+        setError(error.message || "Failed to load cart");
       } finally {
         if (isMounted.current) setLoading(false);
       }
@@ -69,7 +87,7 @@ const Cart = () => {
     return () => {
       isMounted.current = false;
     };
-  }, [navigate]);
+  }, []);
 
   const updateQuantity = async (id: string, change: number) => {
     try {
@@ -84,17 +102,27 @@ const Cart = () => {
         return;
       }
 
-      const { error } = await supabase
-        .from("cart_items")
-        .update({ quantity: newQuantity })
-        .eq("id", id);
-      if (error) throw new Error("Quantity update error: " + error.message);
-
-      setCartItems((items) =>
-        items.map((item) =>
+      if (isGuest) {
+        // Guest user - update localStorage
+        const updatedItems = cartItems.map((item) =>
           item.id === id ? { ...item, quantity: newQuantity } : item,
-        ),
-      );
+        );
+        setCartItems(updatedItems);
+        saveGuestCart(updatedItems);
+      } else {
+        // Authenticated user - update database
+        const { error } = await supabase
+          .from("cart_items")
+          .update({ quantity: newQuantity })
+          .eq("id", id);
+        if (error) throw new Error("Quantity update error: " + error.message);
+
+        setCartItems((items) =>
+          items.map((item) =>
+            item.id === id ? { ...item, quantity: newQuantity } : item,
+          ),
+        );
+      }
     } catch (err) {
       console.error("Update Quantity Error:", err);
       setError(err.message || "Error updating quantity");
@@ -103,10 +131,21 @@ const Cart = () => {
 
   const removeItem = async (id: string) => {
     try {
-      const { error } = await supabase.from("cart_items").delete().eq("id", id);
-      if (error) throw new Error("Remove item error: " + error.message);
+      if (isGuest) {
+        // Guest user - remove from localStorage
+        const updatedItems = cartItems.filter((item) => item.id !== id);
+        setCartItems(updatedItems);
+        saveGuestCart(updatedItems);
+      } else {
+        // Authenticated user - remove from database
+        const { error } = await supabase
+          .from("cart_items")
+          .delete()
+          .eq("id", id);
+        if (error) throw new Error("Remove item error: " + error.message);
 
-      setCartItems((items) => items.filter((item) => item.id !== id));
+        setCartItems((items) => items.filter((item) => item.id !== id));
+      }
     } catch (err) {
       console.error("Remove Item Error:", err);
       setError(err.message || "Error removing item");
